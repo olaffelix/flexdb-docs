@@ -1,8 +1,8 @@
-# 📘 FlexDB API - Guía de Inicio Rápido
+# 📘 FlexDB API - Guía Completa para el Usuario
 
-**Versión de API:** v1.1
+**Versión de API:** v1.0
 
-Bienvenido a la documentación de FlexDB. Aquí encontrarás todo lo que necesitas para empezar a integrar y utilizar nuestra API en tus aplicaciones.
+Bienvenido a la documentación de referencia de FlexDB. Esta guía contiene todo lo que necesitas para integrar y aprovechar al máximo el poder de la API en tus aplicaciones, desde operaciones básicas hasta consultas avanzadas.
 
 ---
 
@@ -30,6 +30,9 @@ Todas las operaciones se realizan a través de este endpoint base, especificando
 
 - **Colección (Collection):** Similar a una tabla en una base de datos SQL. Es un contenedor para tus documentos. Por ejemplo: `users`, `products`, `orders`.
 - **Documento (Document):** Similar a una fila en una tabla SQL, pero en formato JSON. Es la unidad básica de datos.
+- **Identificador (`_id`):** Cada documento posee un `_id` único. Si no se proporciona al guardar, el motor genera automáticamente un **UUID v7** (un identificador universal ordenado por tiempo), lo cual es ideal para la indexación y el rendimiento.
+- **Normalización de Nombres:** Los nombres de bases de datos y colecciones se normalizan internamente (a minúsculas, reemplazando espacios con guiones bajos) para máxima compatibilidad. Puedes usar nombres de hasta 255 caracteres.
+- **Codificación:** El sistema soporta `utf8mb4` de forma nativa, permitiendo el uso de emojis (🎉) y cualquier carácter internacional sin configuración adicional.
 
 ---
 
@@ -54,7 +57,11 @@ Utiliza esta operación para buscar uno o más documentos que coincidan con tus 
 
 - **`collection` (requerido):** El nombre de la colección donde quieres buscar.
 - **`filter` (requerido):** Un objeto JSON con los criterios de búsqueda. Un objeto vacío `{}` busca todos los documentos.
-- **`options` (opcional):** Opciones para paginar, ordenar o limitar los resultados.
+- **`options` (opcional):**
+    - `limit` (number): Máximo de documentos a devolver (Default: **50**, Máximo: 10000).
+    - `skip` (number): Número de documentos a saltar para paginación (Default: **0**). ⚠️ **Nota:** Esta opción tiene un bug conocido en el motor de base de datos para conjuntos de datos muy grandes. Úsalo con precaución.
+    - `sort` (object): Criterio de ordenación. Ej: `{"campo": -1}` para descendente. ⚠️ **Nota:** El ordenamiento alfabético puede ser impreciso dependiendo de la configuración regional (collation) de la base de datos. El ordenamiento numérico funciona perfectamente.
+    - `fields` (array): Lista de campos que quieres que la API te devuelva (proyección). Esto es clave para optimizar el rendimiento al no transferir datos innecesarios. Ej: `["nombre", "email"]`.
 
 **Ejemplo con `curl`:**
 ```bash
@@ -69,7 +76,8 @@ curl --location 'https://ipromos.com.mx/api/flexdb/v1/find' \
         "edad": { "$gte": 18 }
     },
     "options": {
-        "limit": 50
+        "limit": 50,
+        "fields": ["nombre", "email", "perfil.verificado"]
     }
 }'
 ```
@@ -91,7 +99,7 @@ Utiliza esta operación para crear uno o varios documentos nuevos.
 }
 ```
 
-- **`documents`:** Un array que contiene uno o más objetos JSON a guardar.
+- **`documents`:** Puede ser un **objeto único** para insertar un solo documento, o un **array de objetos** para realizar una inserción masiva (batch insert) de forma optimizada.
 
 **Ejemplo con `curl`:**
 ```bash
@@ -119,7 +127,7 @@ Utiliza esta operación para modificar documentos existentes.
     "collection": "nombre_de_tu_coleccion",
     "filter": { "campo_a_buscar": "valor" },
     "update": { "$set": { "campo_a_cambiar": "nuevo_valor" } },
-    "options": { "multi": true }
+    "options": { "multi": true, "upsert": false }
 }
 ```
 
@@ -168,22 +176,57 @@ Utiliza esta operación para eliminar documentos.
 
 ## 📖 Cheatsheet de Filtros (Operators)
 
-Aquí tienes los operadores más comunes para usar dentro del objeto `filter`.
+FlexDB soporta una sintaxis de consulta rica y compatible con MongoDB. Los operadores se clasifican en cuatro categorías según su naturaleza.
+
+#### 🔵 Operadores Primarios (Comparación y Lógica)
+Son el núcleo del motor y se implementan directamente.
 
 | Operador | Descripción | Ejemplo |
 |---|---|---|
-| **(implícito)** | Igual a | `{"ciudad": "Madrid"}` |
-| `$gt` | Mayor que | `{"edad": { "$gt": 18 }}` |
-| `$gte` | Mayor o igual que | `{"precio": { "$gte": 99.99 }}` |
-| `$lt` | Menor que | `{"stock": { "$lt": 10 }}` |
-| `$lte` | Menor o igual que | `{"calificacion": { "$lte": 5 }}` |
-| `$ne` | No es igual a | `{"status": { "$ne": "archivado" }}` |
-| `$in` | El valor está en un array | `{"categoria": { "$in": ["tecnologia", "hogar"] }}` |
-| `$nin` | El valor no está en un array | `{"rol": { "$nin": ["admin", "superadmin"] }}` |
-| `$like` | Búsqueda de texto (comodín `%`) | `{"nombre": { "$like": "Laptop%" }}` |
-| `$between` | El valor está entre dos números | `{"amount": { "$between": [100, 500] }}` |
-| `$or` | Cumple una de varias condiciones | `{"$or": [{"stock": 0}, {"activo": false}]}` |
-| `$exists` | El campo existe (o no) | `{"email": { "$exists": true }}` |
+| `$eq` | Igual a (flexible, ignora tipo de dato). | `{"edad": 18}` |
+| `$eqExact` | Igualdad estricta (valida valor y tipo). | `{"activo": {"$eqExact": true}}` |
+| `$gt` / `$gte` | Mayor que / Mayor o igual que. | `{"edad": { "$gt": 18 }}` |
+| `$lt` / `$lte` | Menor que / Menor o igual que. | `{"precio": { "$lt": 100 }}` |
+| `$in` | El valor se encuentra en una lista. | `{"rol": { "$in": ["admin", "editor"] }}` |
+| `$and` | Y lógico (normalmente implícito). | `{"$and": [{"a":1}, {"b":2}]}` |
+| `$or` | O lógico. | `{"$or": [{"a":1}, {"b":2}]}` |
+| `$not` | Negación de una condición. | `{"edad": { "$not": { "$lt": 18 } }}` |
+| `$regex` | Expresión regular (PCRE). | `{"email": { "$regex": "^admin" }}` |
+| `$isnull` | El valor del campo es `null`. | `{"deleted_at": { "$isnull": true }}` |
+
+#### 🟢 Alias Matemáticos y Lógicos
+Se expanden a combinaciones de operadores primarios para facilitar la escritura.
+
+| Alias | Se expande a | Descripción | Ejemplo |
+|---|---|---|---|
+| `$ne` | `NOT $eq` | No es igual a | `{"status": {"$ne": "deleted"}}` |
+| `$nin` | `NOT $in` | No está en lista | `{"id": {"$nin": [1, 2]}}` |
+| `$between`| `$gte AND $lte` | Rango inclusivo | `{"age": {"$between": [18, 30]}}` |
+| `$nor` | `NOT $or` | Ni uno ni otro | `{"$nor": [{"a":1}, {"b":2}]}` |
+| `$xor` | O exclusivo | Solo una condición verdadera | `{"$xor": [{"a":1}, {"b":2}]}` |
+
+#### 🟡 Alias de Utilidad (Convenience)
+Atajos para operaciones comunes de texto y estructura.
+
+| Alias | Descripción | Ejemplo |
+|---|---|---|
+| `$exists` | El campo existe | `{"email": {"$exists": true}}` |
+| `$isnotnull`| No es nulo | `{"name": {"$isnotnull": true}}` |
+| `$hasValue` | No nulo y no vacío | `{"desc": {"$hasValue": true}}` |
+| `$like` | SQL LIKE (case-sensitive) | `{"name": {"$like": "J%"}}` |
+| `$ilike` | SQL LIKE (case-insensitive) | `{"name": {"$ilike": "j%"}}` |
+| `$contains` | Búsqueda universal (string/array/obj) | `{"tags": {"$contains": "promo"}}` |
+| `$any` | Intersección de arrays (OR) | `{"tags": {"$any": ["a", "b"]}}` |
+| `$hasAll` | Contiene todos (AND) | `{"tags": {"$hasAll": ["a", "b"]}}` |
+
+#### 🔴 Operadores Complejos
+Requieren lógica avanzada del motor.
+
+| Operador | Descripción | Ejemplo |
+|---|---|---|
+| `$size` | Tamaño de array | `{"tags": {"$size": 3}}` |
+| `$type` | Tipo de dato SQL | `{"age": {"$type": "INTEGER"}}` |
+| `$elemMatch`| Coincidencia en objetos de array | `{"users": {"$elemMatch": {"active": true}}}` |
 
 ### Campos Anidados
 
